@@ -150,6 +150,7 @@ func printHTML() {
 	// data = regexp.MustCompile(`(CL (\d+))\b`).ReplaceAllString(data, "<a target=\"_blank\" href='https://golang.org/cl/$2'>$1</a>")
 	data = regexp.MustCompile(`(#(\d+))\s`).ReplaceAllString(data, "<a target=\"_blank\" href='https://github.com/cockroachdb/cockroach/issues/$2'>$1</a>")
 	data = regexp.MustCompile(`(?m)^([\?A-Za-z0-9][^\n]*)`).ReplaceAllString(data, "<b>$1</b>")
+	data = regexp.MustCompile(`(?m)^    ([\?A-Za-z0-9][^\n]*)`).ReplaceAllString(data, "    <b>$1</b>")
 	data = regexp.MustCompile(`(?m)^([^\n]*\[maybe[^\n]*)`).ReplaceAllString(data, "<span class='maybe'>$1</span>")
 	data = regexp.MustCompile(`(?m)^( +)(.*)( → )(.*)(, [\d/]+ days)(, waiting for reviewer)`).ReplaceAllString(data, "$1$2$3<b>$4</b>$5$6")
 	data = regexp.MustCompile(`(?m)^( +)(.*)( → )(.*)(, [\d/]+ days)(, waiting for author)`).ReplaceAllString(data, "$1<b>$2</b>$3$4$5$6")
@@ -275,10 +276,23 @@ func groupData() {
 func printGroups() {
 	for _, g := range groups {
 		fmt.Fprintf(&output, "\n%s\n", g.Dir)
-		for _, item := range g.Items {
+		var lastAssignee *string
+		for i, item := range g.Items {
+			if assignee := itemAssignee(item); lastAssignee == nil || *lastAssignee != assignee {
+				if i > 0 {
+					fmt.Fprintf(&output, "\n")
+				}
+				lastAssignee = new(string)
+				*lastAssignee = assignee
+				if assignee == "" {
+					assignee = "unassigned"
+				}
+				fmt.Fprintf(&output, "    %s\n", assignee)
+			}
+
 			prefix := ""
 			if item.Issue != nil {
-				fmt.Fprintf(&output, "    %-10s  %s", fmt.Sprintf("#%d", item.Issue.Number), item.Issue.Title)
+				fmt.Fprintf(&output, "        %-10s  %s", fmt.Sprintf("#%d", item.Issue.Number), item.Issue.Title)
 				prefix = "\u2937 "
 				var tags []string
 				if strings.HasSuffix(item.Issue.Milestone, "Maybe") {
@@ -287,11 +301,11 @@ func printGroups() {
 				sort.Strings(item.Issue.Labels)
 				for _, label := range item.Issue.Labels {
 					switch label {
-					case "Documentation":
+					case "documentation":
 						tags = append(tags, "doc")
-					case "Testing":
+					case "testing":
 						tags = append(tags, "test")
-					case "Started":
+					case "started":
 						tags = append(tags, strings.ToLower(label))
 					}
 				}
@@ -430,9 +444,27 @@ func (x dirCounts) Less(i, j int) bool {
 
 type itemsBySummary []*Item
 
-func (x itemsBySummary) Len() int           { return len(x) }
-func (x itemsBySummary) Swap(i, j int)      { x[i], x[j] = x[j], x[i] }
-func (x itemsBySummary) Less(i, j int) bool { return itemSummary(x[i]) < itemSummary(x[j]) }
+func (x itemsBySummary) Len() int      { return len(x) }
+func (x itemsBySummary) Swap(i, j int) { x[i], x[j] = x[j], x[i] }
+func (x itemsBySummary) Less(i, j int) bool {
+	ia := itemAssignee(x[i])
+	ja := itemAssignee(x[j])
+	switch {
+	case ia < ja:
+		return true
+	case ia > ja:
+		return false
+	default:
+		return itemSummary(x[i]) < itemSummary(x[j])
+	}
+}
+
+func itemAssignee(it *Item) string {
+	if it.Issue == nil {
+		return ""
+	}
+	return it.Issue.Assignee
+}
 
 func itemSummary(it *Item) string {
 	if it.Issue != nil {
