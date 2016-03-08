@@ -84,16 +84,16 @@ type Item struct {
 }
 
 var (
-	cls    []*CL
-	issues []*Issue
-	maybe  []*Issue
-	groups []*Group
-	output bytes.Buffer
-	skipCL int
+	cls       []*CL
+	issues    []*Issue
+	maybe     []*Issue
+	groups    []*Group
+	assignees []*Item
+	output    bytes.Buffer
+	skipCL    int
 
 	now = time.Now()
 
-	flagCL   = flag.Bool("cl", false, "print CLs only (no issues)")
 	flagHTML = flag.Bool("html", false, "print HTML output")
 
 	cache      = map[string]string{}
@@ -112,19 +112,9 @@ func main() {
 	fetchData()
 	groupData()
 	what := "release"
-	if *flagCL {
-		what = "CL"
-	}
 	fmt.Fprintf(&output, "CockroachDB %s dashboard\n", what)
 	fmt.Fprintf(&output, "%v\n\n", time.Now().UTC().Format(time.UnixDate))
-	// if *flagHTML {
-	// 	fmt.Fprintf(&output, "HOWTO\n\n")
-	// }
-	if *flagCL {
-		fmt.Fprintf(&output, "%d CLs\n", len(cls)-skipCL)
-	} else {
-		fmt.Fprintf(&output, "%d %s issues\n", len(issues)-len(maybe), Release)
-	}
+	fmt.Fprintf(&output, "%d %s issues\n", len(issues)-len(maybe), Release)
 	printGroups()
 	if *flagHTML {
 		printHTML()
@@ -181,10 +171,8 @@ func fetchData() {
 	// }
 	// cls = open
 
-	if !*flagCL {
-		readJSON(&issues, Release+" issues", "issue", "-json", "milestone:"+Release)
-		readJSON(&maybe, Release+"Maybe issues", "issue", "-json", "milestone:"+Release+"Maybe")
-	}
+	readJSON(&issues, Release+" issues", "issue", "-json", "milestone:"+Release)
+	readJSON(&maybe, Release+"Maybe issues", "issue", "-json", "milestone:"+Release+"Maybe")
 	issues = append(issues, maybe...)
 
 	if *writeCache {
@@ -241,6 +229,7 @@ func groupData() {
 		item := &Item{Issue: issue}
 		addGroup(item)
 		itemsByBug[issue.Number] = item
+		assignees = append(assignees, item)
 	}
 
 	for _, cl := range cls {
@@ -253,7 +242,7 @@ func groupData() {
 			}
 		}
 		if !found {
-			if cl.Project == "go" || *flagCL {
+			if cl.Project == "go" {
 				item := &Item{CLs: []*CL{cl}}
 				addGroup(item)
 			} else {
@@ -271,57 +260,64 @@ func groupData() {
 	for _, key := range keys {
 		groups = append(groups, groupsByDir[key])
 	}
+	sort.Sort(itemsBySummary(assignees))
+}
+
+func printItems(indent int, items []*Item) {
+	var lastAssignee *string
+	for i, item := range items {
+		if assignee := itemAssignee(item); lastAssignee == nil || *lastAssignee != assignee {
+			if i > 0 {
+				fmt.Fprintf(&output, "\n")
+			}
+			lastAssignee = new(string)
+			*lastAssignee = assignee
+			if assignee == "" {
+				assignee = "unassigned"
+			}
+			fmt.Fprintf(&output, "%s%s\n", strings.Repeat("    ", indent), assignee)
+		}
+
+		prefix := ""
+		if item.Issue != nil {
+			fmt.Fprintf(&output, "%s%-10s  %s", strings.Repeat("    ", indent+1),
+				fmt.Sprintf("#%d", item.Issue.Number), item.Issue.Title)
+			prefix = "\u2937 "
+			var tags []string
+			if strings.HasSuffix(item.Issue.Milestone, "Maybe") {
+				tags = append(tags, "maybe")
+			}
+			sort.Strings(item.Issue.Labels)
+			for _, label := range item.Issue.Labels {
+				switch label {
+				case "documentation":
+					tags = append(tags, "doc")
+				case "testing":
+					tags = append(tags, "test")
+				case "started":
+					tags = append(tags, strings.ToLower(label))
+				}
+			}
+			if len(tags) > 0 {
+				fmt.Fprintf(&output, " [%s]", strings.Join(tags, ", "))
+			}
+			fmt.Fprintf(&output, "\n")
+		}
+		for _, cl := range item.CLs {
+			fmt.Fprintf(&output, "%s%-10s  %s%s\n", strings.Repeat("    ", indent),
+				fmt.Sprintf("%sCL %d", prefix, cl.Number), prefix, cl.Subject)
+		}
+	}
 }
 
 func printGroups() {
 	for _, g := range groups {
 		fmt.Fprintf(&output, "\n%s\n", g.Dir)
-		var lastAssignee *string
-		for i, item := range g.Items {
-			if assignee := itemAssignee(item); lastAssignee == nil || *lastAssignee != assignee {
-				if i > 0 {
-					fmt.Fprintf(&output, "\n")
-				}
-				lastAssignee = new(string)
-				*lastAssignee = assignee
-				if assignee == "" {
-					assignee = "unassigned"
-				}
-				fmt.Fprintf(&output, "    %s\n", assignee)
-			}
-
-			prefix := ""
-			if item.Issue != nil {
-				fmt.Fprintf(&output, "        %-10s  %s", fmt.Sprintf("#%d", item.Issue.Number), item.Issue.Title)
-				prefix = "\u2937 "
-				var tags []string
-				if strings.HasSuffix(item.Issue.Milestone, "Maybe") {
-					tags = append(tags, "maybe")
-				}
-				sort.Strings(item.Issue.Labels)
-				for _, label := range item.Issue.Labels {
-					switch label {
-					case "documentation":
-						tags = append(tags, "doc")
-					case "testing":
-						tags = append(tags, "test")
-					case "started":
-						tags = append(tags, strings.ToLower(label))
-					}
-				}
-				if len(tags) > 0 {
-					fmt.Fprintf(&output, " [%s]", strings.Join(tags, ", "))
-				}
-				fmt.Fprintf(&output, "\n")
-			}
-			for _, cl := range item.CLs {
-				fmt.Fprintf(&output, "    %-10s  %s%s\n", fmt.Sprintf("%sCL %d", prefix, cl.Number), prefix, cl.Subject)
-				if *flagCL {
-					fmt.Fprintf(&output, "    %-10s      %s\n", "", cl.Status())
-				}
-			}
-		}
+		printItems(1, g.Items)
 	}
+
+	fmt.Fprintf(&output, "\n\n\nBy assignee\n\n")
+	printItems(1, assignees)
 }
 
 var okDesc = map[string]bool{
