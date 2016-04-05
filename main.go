@@ -465,7 +465,7 @@ func itemAssignee(it *Item) string {
 
 func itemSummary(it *Item) string {
 	if it.Issue != nil {
-		return it.Issue.Title
+		return it.Issue.Milestone + "~" + it.Issue.Title
 	}
 	for _, cl := range it.CLs {
 		return cl.Subject
