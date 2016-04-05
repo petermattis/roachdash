@@ -47,7 +47,7 @@ import (
 	"time"
 )
 
-const Release = "Beta"
+const Release = ""
 
 type CL struct {
 	Number             int
@@ -171,8 +171,9 @@ func fetchData() {
 	// }
 	// cls = open
 
-	readJSON(&issues, Release+" issues", "issue", "-json", "milestone:"+Release)
-	readJSON(&maybe, Release+"Maybe issues", "issue", "-json", "milestone:"+Release+"Maybe")
+	readJSON(&issues, "issues", "issue", "-json", "")
+	// readJSON(&issues, Release+" issues", "issue", "-json", "milestone:"+Release)
+	// readJSON(&maybe, Release+"Maybe issues", "issue", "-json", "milestone:"+Release+"Maybe")
 	issues = append(issues, maybe...)
 
 	if *writeCache {
@@ -280,8 +281,8 @@ func printItems(indent int, items []*Item) {
 
 		prefix := ""
 		if item.Issue != nil {
-			fmt.Fprintf(&output, "%s%-10s  %s", strings.Repeat("    ", indent+1),
-				fmt.Sprintf("#%d", item.Issue.Number), item.Issue.Title)
+			fmt.Fprintf(&output, "%s%-10s  [%s] %s", strings.Repeat("    ", indent+1),
+				fmt.Sprintf("#%d", item.Issue.Number), item.Issue.Milestone, item.Issue.Title)
 			prefix = "\u2937 "
 			var tags []string
 			if strings.HasSuffix(item.Issue.Milestone, "Maybe") {
